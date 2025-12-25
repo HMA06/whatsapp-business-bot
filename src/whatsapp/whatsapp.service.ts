@@ -33,11 +33,22 @@ export class WhatsappService implements OnModuleInit {
 
   async connect(tenantId: number) {
     this.client = new Client({
-      authStrategy: new LocalAuth({ clientId: `tenant-${tenantId}` }),
-      puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] },
+      authStrategy: new LocalAuth({ 
+        clientId: `tenant-${tenantId}`,
+        dataPath: './.wwebjs_auth' 
+      }),
+      puppeteer: { 
+        headless: true, 
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
+      },
     });
 
-    this.client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
+    this.client.on('qr', (qr) => {
+        // سيظل يطبع في الـ CMD للسيرفر لتمسحه من هناك أول مرة
+        qrcode.generate(qr, { small: true });
+    });
+
     this.client.on('ready', () => this.logger.log(`Tenant ${tenantId} Ready!`));
 
     this.client.on('message', async (msg: WhatsappMessage) => {
@@ -47,22 +58,16 @@ export class WhatsappService implements OnModuleInit {
         const sub = await this.subscriptionRepo.findOne({ where: { tenantId } });
         if (!sub || sub.status !== 'active') return;
 
-        // 🛡️ 1. جلب المعرفة وتحديد حجمها لمنع خطأ الـ Tokens
         const knowledge = await this.tenantsService.getKnowledgeBase(tenantId);
-        
-        // نأخذ فقط أول 10,000 حرف لضمان عدم تجاوز الـ 32,768 توكن
         let knowledgeText = knowledge.map(k => k.answer).join('\n\n');
         if (knowledgeText.length > 10000) {
-            knowledgeText = knowledgeText.substring(0, 10000) + '... [النص طويل جداً وتم اقتطاعه]';
+            knowledgeText = knowledgeText.substring(0, 10000) + '...';
         }
 
         const completion = await this.openai.chat.completions.create({
           model: 'meta-llama/llama-3.2-3b-instruct:free',
           messages: [
-            { 
-              role: 'system', 
-              content: `أنت مساعد لشركة SmartBiz. أجب باختصار وبالعربية من النص التالي:\n${knowledgeText}` 
-            },
+            { role: 'system', content: `أنت مساعد لشركة SmartBiz. أجب باختصار وبالعربية من النص التالي:\n${knowledgeText}` },
             { role: 'user', content: msg.body },
           ],
           temperature: 0.1,
@@ -74,17 +79,12 @@ export class WhatsappService implements OnModuleInit {
             sub.usedMessages += 1;
             await this.subscriptionRepo.save(sub);
         }
-
       } catch (e) {
         this.logger.error('System Error: ', e.message);
-        // في حال تكرار الخطأ، نرسل رد مبسط للمستخدم
-        if (e.message.includes('context length')) {
-            await msg.reply('⚠️ الملف المرفوع ضخم جداً، يرجى تزويدي بنص السؤال مباشرة.');
-        }
       }
     });
 
     this.client.initialize();
-    return { message: 'Success' };
+    return { message: 'Connecting... Check Server Logs for QR' };
   }
 }
