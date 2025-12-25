@@ -1,65 +1,44 @@
 "use client";
+import { useState } from 'react';
+import { supabase } from '@/lib/supabase'; // تأكد من مسار ملف السوبابيس عندك
+import { useRouter } from 'next/navigation';
+import cookie from 'js-cookie';
 
-import { useState } from "react";
-import { supabase } from "../../utils/supabaseClient";
-
-
-export default function Home() {
+export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const router = useRouter();
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleLogin = async () => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    
+    if (data?.user) {
+      // جلب الرتبة من جدول الـ profiles
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', data.user.id)
+        .single();
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+      const role = profile?.role || 'Client';
 
-    if (error) {
-      alert("Error: " + error.message);
-    } else {
-      alert("Login successful!");
-      window.location.href = "/dashboard";
+      // حفظ التوكن والرتبة في الكوكيز ليعرفها الـ Middleware
+      cookie.set('auth-token', data.session.access_token, { expires: 7 });
+      cookie.set('user-role', role, { expires: 7 });
+
+      // التوجيه حسب الرتبة
+      if (role === 'Admin') router.push('/dashboard/admin');
+      else if (role === 'Accountant') router.push('/dashboard/accounting');
+      else router.push('/dashboard');
     }
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
-      <div className="bg-white p-8 rounded-lg shadow-md w-80">
-        <h1 className="text-xl font-semibold mb-4 text-center">تسجيل دخول</h1>
-
-        <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label className="mb-1 block text-right">البريد الإلكتروني</label>
-            <input
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 border rounded-md"
-            />
-          </div>
-
-          <div className="mb-4">
-            <label className="mb-1 block text-right">كلمة المرور</label>
-            <input
-              type="password"
-              placeholder="••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border rounded-md"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="w-full px-4 py-2 bg-blue-500 text-white rounded-md"
-          >
-            تسجيل دخول
-          </button>
-        </form>
-      </div>
+    <div style={{ padding: '100px', textAlign: 'center' }}>
+      <h1>تسجيل الدخول - SmartBiz 🤖</h1>
+      <input type="email" placeholder="البريد الإلكتروني" onChange={(e) => setEmail(e.target.value)} /><br/>
+      <input type="password" placeholder="كلمة السر" onChange={(e) => setPassword(e.target.value)} /><br/>
+      <button onClick={handleLogin}>دخول</button>
     </div>
   );
 }
