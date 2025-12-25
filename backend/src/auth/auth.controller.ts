@@ -1,19 +1,35 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { LocalAuthGuard } from './guards/local-auth.guard';
+import { LoginDto } from './auth.dto';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { RolesGuard } from './roles.guard';
+import { PermissionsGuard } from './permissions.guard';
+import { Roles } from './role.decorator';
+import { Permissions } from './permissions.decorator';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(private readonly authService: AuthService) {}
 
-  @HttpCode(HttpStatus.OK)
   @Post('login')
-  async login(@Body() loginDto: any) {
-    // تم تغيير اسم الدالة من signIn إلى login لتطابق الـ Service
-    const user = await this.authService.validateUser(loginDto.username, loginDto.password);
-    if (!user) {
-      return { message: 'بيانات الدخول غير صحيحة' };
-    }
+  async login(@Body() body: LoginDto) {
+    const user = await this.authService.validateUser(body.email, body.password);
     return this.authService.login(user);
+  }
+
+  // 🔥 route يحتاج ROLE = admin
+  @Get('admin-only')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  getAdmin() {
+    return { message: 'مرحبا يا ادمن! ✔️' };
+  }
+
+  // 🔥 route يحتاج permission = users.write
+  @Get('write-only')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('users.write')
+  canWrite() {
+    return { message: 'عندك صلاحية الكتابة! ✔️' };
   }
 }

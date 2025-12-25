@@ -1,5 +1,3 @@
 export class RefreshDto {
-  userId: string;
-  deviceId: string;
-  refreshToken: string;
+  refresh_token: string;
 }

@@ -1,18 +1,17 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
-import { Tenant } from '../tenants/entities/tenant.entity';
 import { User } from '../users/entities/user.entity';
-import { Role } from '../users/entities/role.entity';
-import { Permission } from '../users/entities/permission.entity';
-import { WhatsAppSession } from '../whatsapp/entities/whatsapp-session.entity';
+import { Tenant } from '../tenants/entities/tenant.entity';
+import { UserRole } from '../user-roles/entities/user-role.entity';
+import { Role } from '../user-roles/entities/role.entity';
 
 export const databaseConfig: TypeOrmModuleOptions = {
   type: 'postgres',
-  host: '127.0.0.1',
-  port: 5436, // المنفذ الجديد للهرب من تعارضات النظام
-  username: 'postgres',
-  password: 'password',
-  database: 'postgres',
-  entities: [__dirname + '/../**/*.entity{.ts,.js}'],
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '5432', 10),
+  username: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'postgres',
+  database: process.env.DB_NAME || 'multitenant',
+  entities: [User, Tenant, UserRole, Role],
   synchronize: true,
-  logging: true,
+  logging: false,
 };

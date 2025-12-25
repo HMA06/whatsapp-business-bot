@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToMany,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
+import { UserRole } from '../../user-roles/entities/user-role.entity';
 import { Tenant } from '../../tenants/entities/tenant.entity';
 
 @Entity('users')
@@ -9,29 +17,23 @@ export class User {
   @Column({ unique: true })
   username: string;
 
-  @Column()
-  password: string;
-
-  @Column({ nullable: true }) // ✅ جعلناه nullable لتجنب خطأ null value in column "email"
+  @Column({ unique: true, nullable: true })
   email: string;
 
-  @Column({ default: 'admin' }) // 'admin', 'user'
-  role: string;
-
-  @Column({ default: true })
-  isActive: boolean;
-
-  // الربط مع الشركة (Tenant)
-  @ManyToOne(() => Tenant)
-  @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  @Column()
+  password?: string;
 
   @Column()
   tenantId: number;
 
-  @CreateDateColumn()
-  createdAt: Date;
+  @ManyToOne(() => Tenant, (tenant) => tenant.users, {
+    nullable: false,
+    onDelete: 'CASCADE',
+    eager: true,
+  })
+  @JoinColumn({ name: 'tenantId' })
+  tenant: Tenant;
 
-  @UpdateDateColumn()
-  updatedAt: Date;
+  @OneToMany(() => UserRole, (userRole) => userRole.user)
+  userRoles: UserRole[];
 }

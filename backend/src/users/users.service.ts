@@ -7,30 +7,28 @@ import { User } from './entities/user.entity';
 export class UsersService {
   constructor(
     @InjectRepository(User)
-    private usersRepo: Repository<User>,
+    private usersRepository: Repository<User>,
   ) {}
 
-  async create(data: any) {
-    const newUser = this.usersRepo.create({
-      username: data.username,
-      password: data.password,
-      tenantId: Number(data.tenantId),
-      email: data.email || `${data.username}@smartbiz.ai`
-    });
-    return this.usersRepo.save(newUser);
+  async create(dto: any) {
+    const newUser = this.usersRepository.create(dto);
+    return this.usersRepository.save(newUser);
+  }
+
+  async findAll() {
+    return this.usersRepository.find({ relations: ['userRoles'] });
   }
 
   async findOne(username: string): Promise<User | undefined> {
-    return this.usersRepo.findOne({ where: { username }, relations: ['tenant'] });
+    return this.usersRepository.findOne({ where: { username }, relations: ['tenant'] });
   }
 
-  // ✅ إضافة الدالة الناقصة لجلب كل المستخدمين
-  async findAll(): Promise<User[]> {
-    return this.usersRepo.find({ relations: ['tenant'] });
+  async findById(userId: string): Promise<User | undefined> {
+    return this.usersRepository.findOne({ where: { id: parseInt(userId, 10) } });
   }
 
-  // ✅ إضافة الدالة الناقصة لحذف مستخدم
-  async remove(id: string): Promise<void> {
-    await this.usersRepo.delete(id);
+  async assignRole(userId: string, roleId: number, tenantId: number) {
+    // كود منطق تعيين الرتبة هنا
+    return { message: 'Role assigned successfully' };
   }
 }

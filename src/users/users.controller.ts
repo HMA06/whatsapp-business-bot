@@ -1,13 +1,12 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { CreateUserDto } from './dto/create-user.dto';
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  create(@Body() dto: CreateUserDto) {
+  create(@Body() dto: any) {
     return this.usersService.create(dto);
   }
 
@@ -16,11 +15,9 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
-  @Post(':id/assign-role')
-  assignRole(
-    @Param('id') id: string,
-    @Body() dto: { role_id: string; tenantId: string },
-  ) {
-    return this.usersService.assignRole(id, dto.role_id, dto.tenantId);
+  @Put(':id/role')
+  assignRole(@Param('id') id: string, @Body() dto: any) {
+    // تم إضافة + قبل role_id و tenantId لتحويلهم إلى أرقام وحل الخطأ
+    return this.usersService.assignRole(id, +dto.role_id, +dto.tenantId);
   }
 }

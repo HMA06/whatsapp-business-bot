@@ -1,22 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Role } from './entities/roles.entity';
+import { Role } from '../user-roles/entities/role.entity';
 import { CreateRoleDto } from './dto/create-role.dto';
 
 @Injectable()
 export class RolesService {
   constructor(
     @InjectRepository(Role)
-    private rolesRepository: Repository<Role>,
+    private readonly rolesRepository: Repository<Role>, // ✅ Role واحد
   ) {}
 
-  async create(dto: CreateRoleDto) {
-    const role = this.rolesRepository.create(dto);
-    return this.rolesRepository.save(role);
+  async create(dto: CreateRoleDto): Promise<Role> {
+    const role: Role = this.rolesRepository.create(dto); // ✅ ليس Array
+    return this.rolesRepository.save(role);              // ✅ يرجع Role
   }
 
-  async findAll() {
+  async findAll(): Promise<Role[]> {
     return this.rolesRepository.find();
   }
 }

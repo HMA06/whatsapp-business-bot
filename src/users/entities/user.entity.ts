@@ -1,38 +1,39 @@
 import {
   Entity,
-  Column,
   PrimaryGeneratedColumn,
+  Column,
+  OneToMany,
   ManyToOne,
-  CreateDateColumn,
-  UpdateDateColumn,
+  JoinColumn,
 } from 'typeorm';
+import { UserRole } from '../../user-roles/entities/user-role.entity';
 import { Tenant } from '../../tenants/entities/tenant.entity';
 
-@Entity({ name: 'users' }) // 🔥 مهم جداً
+@Entity('users')
 export class User {
   @PrimaryGeneratedColumn()
   id: number;
 
   @Column({ unique: true })
+  username: string;
+
+  @Column({ unique: true, nullable: true })
   email: string;
 
   @Column()
-  password: string;
-
-  @Column({ default: 'user' })
-  role: string;
+  password?: string;
 
   @Column()
   tenantId: number;
 
   @ManyToOne(() => Tenant, (tenant) => tenant.users, {
+    nullable: false,
     onDelete: 'CASCADE',
+    eager: true,
   })
+  @JoinColumn({ name: 'tenantId' })
   tenant: Tenant;
 
-  @CreateDateColumn()
-  createdAt: Date;
-
-  @UpdateDateColumn()
-  updatedAt: Date;
+  @OneToMany(() => UserRole, (userRole) => userRole.user)
+  userRoles: UserRole[];
 }
