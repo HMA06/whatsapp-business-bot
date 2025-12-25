@@ -1,6 +1,5 @@
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Client, LocalAuth, Message as WhatsappMessage } from 'whatsapp-web.js';
-import * as qrcodeTerminal from 'qrcode-terminal';
 import * as QRCode from 'qrcode';
 import OpenAI from 'openai';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -10,113 +9,78 @@ import { Subscription } from '../subscriptions/entities/subscription.entity';
 import { TenantsService } from '../tenants/tenants.service';
 
 @Injectable()
-export class WhatsappService implements OnModuleInit {
+export class WhatsappService {
   private readonly logger = new Logger(WhatsappService.name);
   private client!: Client;
   private openai: OpenAI;
   private lastQr: string = "";
 
   constructor(
-    @InjectRepository(MessageEntity)
-    private messageRepo: Repository<MessageEntity>,
-    @InjectRepository(Subscription)
-    private subscriptionRepo: Repository<Subscription>,
+    @InjectRepository(MessageEntity) private messageRepo: Repository<MessageEntity>,
+    @InjectRepository(Subscription) private subscriptionRepo: Repository<Subscription>,
     private tenantsService: TenantsService,
   ) {
-    // إعداد OpenAI للتعامل مع OpenRouter
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       baseURL: 'https://openrouter.ai/api/v1',
     });
   }
 
-  onModuleInit() {
-    this.logger.log('WhatsApp Service Initialized');
-  }
+  getLatestQr() { return { qr: this.lastQr }; }
 
-  // دالة لجلب الرمز الحالي للفرونت إند
-  getLatestQr() {
-    return { qr: this.lastQr };
+  // ✅ دالة الإرسال اليدوي عبر الـ CRM
+  async sendManual(tenantId: number, to: string, message: string) {
+    if (!this.client) throw new Error('WhatsApp client not initialized');
+    
+    const formattedTo = to.includes('@c.us') ? to : `${to}@c.us`;
+    await this.client.sendMessage(formattedTo, message);
+    
+    // حفظ الرسالة اليدوية في السجل لضمان مزامنة البيانات
+    await this.messageRepo.save({
+      tenantId,
+      from: 'Manual-CRM',
+      body: message,
+      timestamp: new Date()
+    });
+    
+    return { success: true };
   }
 
   async connect(tenantId: number) {
     this.client = new Client({
-      authStrategy: new LocalAuth({ 
-        clientId: `tenant-${tenantId}`,
-        dataPath: './.wwebjs_auth' 
-      }),
-      puppeteer: { 
-        headless: true, 
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
-      },
+      authStrategy: new LocalAuth({ clientId: `tenant-${tenantId}` }),
+      puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
     });
 
-    // توليد الرمز وتحويله لصورة
     this.client.on('qr', async (qr) => {
-      qrcodeTerminal.generate(qr, { small: true });
       this.lastQr = await QRCode.toDataURL(qr);
-      this.logger.log(`New QR Code generated for Tenant ${tenantId}`);
     });
 
-    this.client.on('ready', () => {
-      this.lastQr = "";
-      this.logger.log(`WhatsApp Client for Tenant ${tenantId} is READY!`);
-    });
-
-    // المحرك الذكي للرد على الرسائل
     this.client.on('message', async (msg: WhatsappMessage) => {
       if (msg.from === 'status@broadcast' || msg.fromMe) return;
 
       try {
-        // 1. التحقق من حالة اشتراك العميل
         const sub = await this.subscriptionRepo.findOne({ where: { tenantId } });
         if (!sub || sub.status !== 'active') return;
 
-        // 2. جلب "قاعدة المعرفة" الخاصة بالشركة من السوبابيس
+        // جلب سياق الشركة من قاعدة المعرفة
         const knowledge = await this.tenantsService.getKnowledgeBase(tenantId);
-        
-        // تحويل المعرفة إلى سياق نصي للذكاء الاصطناعي
-        let context = "المعلومات المتاحة عن الشركة:\n";
-        knowledge.forEach(k => {
-          context += `السؤال: ${k.question} | الإجابة: ${k.answer}\n`;
-        });
+        let context = knowledge.map(k => `س: ${k.question}\nج: ${k.answer}`).join('\n');
 
-        // 3. إرسال السؤال للذكاء الاصطناعي (Llama 3.2) مع السياق
         const completion = await this.openai.chat.completions.create({
           model: 'meta-llama/llama-3.2-3b-instruct:free',
           messages: [
-            { 
-              role: 'system', 
-              content: `أنت مساعد ذكي لخدمة العملاء. أجب باللغة العربية حصراً وبناءً على المعلومات التالية فقط:\n${context}` 
-            },
+            { role: 'system', content: `أجب بناءً على هذه المعلومات فقط:\n${context}` },
             { role: 'user', content: msg.body },
           ],
-          temperature: 0.3,
         });
 
         const reply = completion.choices?.[0]?.message?.content;
-
         if (reply) {
-          // 4. إرسال الرد للعميل
           await msg.reply(reply);
-
-          // 5. تحديث إحصائيات الرسائل المستخدمة
-          sub.usedMessages += 1;
-          await this.subscriptionRepo.save(sub);
-
-          // 6. حفظ الرسالة في السجل للرجوع إليها في الـ CRM
-          await this.messageRepo.save({
-            tenantId,
-            from: msg.from,
-            body: msg.body,
-            reply: reply,
-            timestamp: new Date()
-          });
+          await this.messageRepo.save({ tenantId, from: msg.from, body: msg.body, reply, timestamp: new Date() });
         }
-      } catch (e) {
-        this.logger.error('Error handling message: ', e.message);
-      }
+      } catch (e) { this.logger.error('Error:', e.message); }
     });
 
     this.client.initialize();

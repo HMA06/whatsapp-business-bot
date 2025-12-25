@@ -1,26 +1,25 @@
-import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common';
 import { WhatsappService } from './whatsapp.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('whatsapp')
+@UseGuards(JwtAuthGuard) // حماية المسارات لضمان وصول المستخدمين المصرح لهم فقط
 export class WhatsappController {
   constructor(private readonly whatsappService: WhatsappService) {}
 
   @Post('connect')
-  async connect(@Body() body: { tenantId: number }) {
-    // نبدأ عملية الاتصال
-    this.whatsappService.connect(body.tenantId);
-    
-    // ننتظر 5 ثوانٍ لضمان توليد الرمز ثم نرسله
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve(this.whatsappService.getLatestQr());
-      }, 5000);
-    });
+  async connect(@Body() data: { tenantId: number }) {
+    return this.whatsappService.connect(data.tenantId);
   }
 
-  // مسار إضافي لجلب الرمز في أي وقت
   @Get('qr')
-  getQr() {
+  async getQr() {
     return this.whatsappService.getLatestQr();
+  }
+
+  // ✅ مسار الإرسال اليدوي المخصص لموظفي الـ CRM
+  @Post('send-manual')
+  async sendManual(@Body() data: { tenantId: number, to: string, message: string }) {
+    return this.whatsappService.sendManual(data.tenantId, data.to, data.message);
   }
 }
