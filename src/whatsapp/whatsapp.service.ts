@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Client, LocalAuth, Message as WhatsappMessage } from 'whatsapp-web.js';
-import * as qrcode from 'qrcode-terminal';
+import * as qrcodeTerminal from 'qrcode-terminal';
+import * as QRCode from 'qrcode'; // مكتبة تحويل الرمز لصورة
 import OpenAI from 'openai';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -13,6 +14,7 @@ export class WhatsappService implements OnModuleInit {
   private readonly logger = new Logger(WhatsappService.name);
   private client!: Client;
   private openai: OpenAI;
+  private lastQr: string = ""; // متغير لحفظ الرمز كصورة
 
   constructor(
     @InjectRepository(MessageEntity)
@@ -31,25 +33,33 @@ export class WhatsappService implements OnModuleInit {
     this.logger.log('WhatsApp Service Initialized');
   }
 
+  // دالة لجلب آخر رمز تم توليده
+  getLatestQr() {
+    return { qr: this.lastQr };
+  }
+
   async connect(tenantId: number) {
     this.client = new Client({
-      authStrategy: new LocalAuth({ 
-        clientId: `tenant-${tenantId}`,
-        dataPath: './.wwebjs_auth' 
-      }),
+      authStrategy: new LocalAuth({ clientId: `tenant-${tenantId}` }),
       puppeteer: { 
         headless: true, 
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
       },
     });
 
-    this.client.on('qr', (qr) => {
-        // سيظل يطبع في الـ CMD للسيرفر لتمسحه من هناك أول مرة
-        qrcode.generate(qr, { small: true });
+    this.client.on('qr', async (qr) => {
+      // طباعة في الـ CMD للاحتياط
+      qrcodeTerminal.generate(qr, { small: true });
+      
+      // تحويل الرمز إلى Base64 ليظهر في المتصفح
+      this.lastQr = await QRCode.toDataURL(qr);
+      this.logger.log('New QR Code generated and ready for Frontend');
     });
 
-    this.client.on('ready', () => this.logger.log(`Tenant ${tenantId} Ready!`));
+    this.client.on('ready', () => {
+        this.lastQr = ""; // تنظيف الرمز بعد النجاح
+        this.logger.log(`Tenant ${tenantId} Ready!`);
+    });
 
     this.client.on('message', async (msg: WhatsappMessage) => {
       if (msg.from === 'status@broadcast' || msg.fromMe) return;
@@ -60,17 +70,13 @@ export class WhatsappService implements OnModuleInit {
 
         const knowledge = await this.tenantsService.getKnowledgeBase(tenantId);
         let knowledgeText = knowledge.map(k => k.answer).join('\n\n');
-        if (knowledgeText.length > 10000) {
-            knowledgeText = knowledgeText.substring(0, 10000) + '...';
-        }
-
+        
         const completion = await this.openai.chat.completions.create({
           model: 'meta-llama/llama-3.2-3b-instruct:free',
           messages: [
-            { role: 'system', content: `أنت مساعد لشركة SmartBiz. أجب باختصار وبالعربية من النص التالي:\n${knowledgeText}` },
+            { role: 'system', content: `أنت مساعد ذكي لشركة SmartBiz. أجب باختصار من النص: ${knowledgeText.substring(0, 5000)}` },
             { role: 'user', content: msg.body },
           ],
-          temperature: 0.1,
         });
 
         const reply = completion.choices?.[0]?.message?.content;
@@ -80,11 +86,10 @@ export class WhatsappService implements OnModuleInit {
             await this.subscriptionRepo.save(sub);
         }
       } catch (e) {
-        this.logger.error('System Error: ', e.message);
+        this.logger.error('Error in message handler: ', e.message);
       }
     });
 
     this.client.initialize();
-    return { message: 'Connecting... Check Server Logs for QR' };
   }
 }
