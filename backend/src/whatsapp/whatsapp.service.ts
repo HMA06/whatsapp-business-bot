@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Client, LocalAuth, Message as WhatsappMessage } from 'whatsapp-web.js';
 import * as qrcodeTerminal from 'qrcode-terminal';
-import * as QRCode from 'qrcode'; // مكتبة تحويل الرمز لصورة
+import * as QRCode from 'qrcode';
 import OpenAI from 'openai';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -14,7 +14,7 @@ export class WhatsappService implements OnModuleInit {
   private readonly logger = new Logger(WhatsappService.name);
   private client!: Client;
   private openai: OpenAI;
-  private lastQr: string = ""; // متغير لحفظ الرمز كصورة
+  private lastQr: string = "";
 
   constructor(
     @InjectRepository(MessageEntity)
@@ -23,6 +23,7 @@ export class WhatsappService implements OnModuleInit {
     private subscriptionRepo: Repository<Subscription>,
     private tenantsService: TenantsService,
   ) {
+    // إعداد OpenAI للتعامل مع OpenRouter
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       baseURL: 'https://openrouter.ai/api/v1',
@@ -33,60 +34,88 @@ export class WhatsappService implements OnModuleInit {
     this.logger.log('WhatsApp Service Initialized');
   }
 
-  // دالة لجلب آخر رمز تم توليده
+  // دالة لجلب الرمز الحالي للفرونت إند
   getLatestQr() {
     return { qr: this.lastQr };
   }
 
   async connect(tenantId: number) {
     this.client = new Client({
-      authStrategy: new LocalAuth({ clientId: `tenant-${tenantId}` }),
+      authStrategy: new LocalAuth({ 
+        clientId: `tenant-${tenantId}`,
+        dataPath: './.wwebjs_auth' 
+      }),
       puppeteer: { 
         headless: true, 
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
       },
     });
 
+    // توليد الرمز وتحويله لصورة
     this.client.on('qr', async (qr) => {
-      // طباعة في الـ CMD للاحتياط
       qrcodeTerminal.generate(qr, { small: true });
-      
-      // تحويل الرمز إلى Base64 ليظهر في المتصفح
       this.lastQr = await QRCode.toDataURL(qr);
-      this.logger.log('New QR Code generated and ready for Frontend');
+      this.logger.log(`New QR Code generated for Tenant ${tenantId}`);
     });
 
     this.client.on('ready', () => {
-        this.lastQr = ""; // تنظيف الرمز بعد النجاح
-        this.logger.log(`Tenant ${tenantId} Ready!`);
+      this.lastQr = "";
+      this.logger.log(`WhatsApp Client for Tenant ${tenantId} is READY!`);
     });
 
+    // المحرك الذكي للرد على الرسائل
     this.client.on('message', async (msg: WhatsappMessage) => {
       if (msg.from === 'status@broadcast' || msg.fromMe) return;
 
       try {
+        // 1. التحقق من حالة اشتراك العميل
         const sub = await this.subscriptionRepo.findOne({ where: { tenantId } });
         if (!sub || sub.status !== 'active') return;
 
+        // 2. جلب "قاعدة المعرفة" الخاصة بالشركة من السوبابيس
         const knowledge = await this.tenantsService.getKnowledgeBase(tenantId);
-        let knowledgeText = knowledge.map(k => k.answer).join('\n\n');
         
+        // تحويل المعرفة إلى سياق نصي للذكاء الاصطناعي
+        let context = "المعلومات المتاحة عن الشركة:\n";
+        knowledge.forEach(k => {
+          context += `السؤال: ${k.question} | الإجابة: ${k.answer}\n`;
+        });
+
+        // 3. إرسال السؤال للذكاء الاصطناعي (Llama 3.2) مع السياق
         const completion = await this.openai.chat.completions.create({
           model: 'meta-llama/llama-3.2-3b-instruct:free',
           messages: [
-            { role: 'system', content: `أنت مساعد ذكي لشركة SmartBiz. أجب باختصار من النص: ${knowledgeText.substring(0, 5000)}` },
+            { 
+              role: 'system', 
+              content: `أنت مساعد ذكي لخدمة العملاء. أجب باللغة العربية حصراً وبناءً على المعلومات التالية فقط:\n${context}` 
+            },
             { role: 'user', content: msg.body },
           ],
+          temperature: 0.3,
         });
 
         const reply = completion.choices?.[0]?.message?.content;
+
         if (reply) {
-            await msg.reply(reply);
-            sub.usedMessages += 1;
-            await this.subscriptionRepo.save(sub);
+          // 4. إرسال الرد للعميل
+          await msg.reply(reply);
+
+          // 5. تحديث إحصائيات الرسائل المستخدمة
+          sub.usedMessages += 1;
+          await this.subscriptionRepo.save(sub);
+
+          // 6. حفظ الرسالة في السجل للرجوع إليها في الـ CRM
+          await this.messageRepo.save({
+            tenantId,
+            from: msg.from,
+            body: msg.body,
+            reply: reply,
+            timestamp: new Date()
+          });
         }
       } catch (e) {
-        this.logger.error('Error in message handler: ', e.message);
+        this.logger.error('Error handling message: ', e.message);
       }
     });
 
